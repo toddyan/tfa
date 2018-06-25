@@ -15,10 +15,16 @@ class Conf:
         self.model_path = self.model_dir + self.model_name
         ############### data ################
         (x_train,y_train),(x_test,y_test) = mnist.load_data()
+        validation_example = int(0.1 * x_train.shape[0])
         self.x_train = x_train.reshape(x_train.shape[0],-1)/255.0
+        self.x_valid = self.x_train[validation_example:]
+        self.x_train = self.x_train[:validation_example]
         self.x_test = x_test.reshape(x_test.shape[0],-1)/255.0
         self.y_train = y_train.astype(np.int32)
+        self.y_valid = self.y_train[validation_example:]
+        self.y_train = self.y_train[:validation_example]
         self.y_test = y_test.astype(np.int32)
+
         self.N = [self.x_train.shape[1],500,10]
         self.batch_size = 6400
         self.cursor = 0
@@ -32,9 +38,4 @@ class Conf:
         start = self.cursor
         end = min(self.cursor+self.batch_size, self.x_train.shape[0])
         self.cursor = end
-        return (start, end)
-
-
-conf = Conf()
-for i in range(20):
-    print(conf.get_batch())
+        return self.x_train[start:end], self.y_train[start:end]
