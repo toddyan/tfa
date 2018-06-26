@@ -2,10 +2,10 @@ import numpy as np
 import tensorflow as tf
 import time
 
-from fc import mnist_conf
+from fc import cifar10_conf
 from fc import infer
 
-conf = mnist_conf.Conf()
+conf = cifar10_conf.Conf()
 
 with tf.variable_scope("input"):
     x = tf.placeholder(dtype=tf.float32, shape=[None, conf.fc_layers[0]], name="input-x")
