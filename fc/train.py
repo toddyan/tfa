@@ -1,9 +1,9 @@
 import tensorflow as tf
 import tensorflow.contrib.layers as cont_layers
 
-from fc import mnist_conf
+from fc import cifar10_conf
 from fc import infer
-conf = mnist_conf.Conf()
+conf = cifar10_conf.Conf()
 regul = cont_layers.l2_regularizer(conf.regularizer_weight)
 with tf.variable_scope("input"):
     x = tf.placeholder(dtype=tf.float32, shape=[None, conf.fc_layers[0]], name="input-x")
