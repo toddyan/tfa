@@ -26,7 +26,7 @@ class Conf:
         self.y_test = y_test.astype(np.int32)
 
         self.fc_layers = [self.x_train.shape[1],500,10]
-        self.batch_size = 6400
+        self.batch_size = 64
         self.cursor = 0
         ############### optimize ################
         self.regularizer_weight = 0.0001
