@@ -17,8 +17,10 @@ with tf.variable_scope("valid"):
         tf.argmax(logits, axis=1, output_type=tf.int32),
         y
     ),tf.float32))
-
-saver = tf.train.Saver()
+with tf.variable_scope("ema"):
+    ema = tf.train.ExponentialMovingAverage(conf.ema_decay)
+    print("\n".join(ema.variables_to_restore()))
+    saver = tf.train.Saver(ema.variables_to_restore())
 with tf.Session() as s:
     tf.global_variables_initializer().run()
     while True:

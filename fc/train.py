@@ -25,7 +25,13 @@ with tf.variable_scope("optimizer"):
         staircase=True
     )
     train_op = tf.train.GradientDescentOptimizer(learning_rate).minimize(total_loss,global_step=global_step)
-group_op = tf.group(train_op)
+with tf.variable_scope("ema"):
+    ema = tf.train.ExponentialMovingAverage(
+        decay=conf.ema_decay,
+        num_updates=global_step
+    )
+    ema_op = ema.apply(tf.trainable_variables())
+group_op = tf.group(train_op,ema_op)
 writer = tf.summary.FileWriter(conf.model_dir, tf.get_default_graph())
 writer.close()
 saver = tf.train.Saver()

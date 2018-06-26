@@ -32,6 +32,8 @@ class Conf:
         self.regularizer_weight = 0.0001
         self.learning_rate_base = 0.1
         self.learning_rate_decay = 0.999
+        ############### optimize ################
+        self.ema_decay = 0.99
     def get_root(self):
         return self.root
     def get_batch(self):
