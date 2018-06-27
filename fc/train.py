@@ -43,5 +43,5 @@ with tf.Session() as s:
         if step%10 == 0: print(step,":",lo,ce)
         if step%100 == 0:
             saver.save(s,conf.model_path,global_step=global_step)
-        if step==10000:
+        if step==50000:
             break
