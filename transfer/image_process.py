@@ -72,6 +72,7 @@ class ImageDataset:
 
 def main(argv=None):
     d = ImageDataset()
+    d.npy_maker(globalconf.get_root() + 'transfer/small')
     d.combine(globalconf.get_root() + 'transfer/small', 5, 0.1, 0.1, 0.5)
     print(d.training_images.shape, d.training_labels.shape, d.validation_images.shape, d.validation_labels.shape, d.test_images.shape, d.test_labels.shape)
 if __name__ == "__main__":
