@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import globalconf
 import tensorflow as tf
+import numpy as np
 import tensorflow.contrib.slim as slim
 import tensorflow.contrib.slim.python.slim.nets.inception_v3 as inception_v3
 from tf_record_dataset import ImageTFRecordBuilder
@@ -13,7 +14,7 @@ class Model:
                 tfrecord_paths = tf.placeholder(tf.string, shape=[])
                 files = tf.train.match_filenames_once(tfrecord_paths)
                 ds = tf.data.TFRecordDataset(files)
-                ds = ds.map(paser).shuffle(buffer_size=100).batch(32)
+                ds = ds.map(paser).repeat(10).shuffle(buffer_size=100).batch(32)
                 iterator = ds.make_initializable_iterator()
                 images, labels = iterator.get_next()
 
@@ -75,7 +76,7 @@ class Model:
         saver = tf.train.Saver()
         saver.save(sess, out_model_path)
 
-    def eval(self, sess, images, labels, model_path, valid_files):
+    def eval(self, sess, model_path, valid_files):
         sess.run(
             [tf.global_variables_initializer(), tf.local_variables_initializer()],
             feed_dict={self.tfrecord_paths: valid_files}
@@ -88,30 +89,21 @@ class Model:
         saver.restore(sess, model_path)
         while True:
             try:
-                acc = sess.run(self.accuracy) #, feed_dict={self.images: images, self.labels: labels})
+                acc = sess.run(self.accuracy)
                 print("valid:", acc)
             except tf.errors.OutOfRangeError:
                 break
-    def _eval(self, sess, images, labels, model_path):
+    def get_predictor(self, model_path):
+        sess = tf.Session()
         sess.run(
             [tf.global_variables_initializer(), tf.local_variables_initializer()],
             feed_dict={self.tfrecord_paths: ''}
         )
         saver = tf.train.Saver()
         saver.restore(sess, model_path)
-        acc = sess.run(self.accuracy, feed_dict={self.images: images, self.labels: labels})
-        print("valid:", acc)
-
-## test
-# p = tf.placeholder(tf.string, shape=[])
-# fs = tf.train.match_filenames_once(p)
-# ds = tf.data.TFRecordDataset(fs)
-# iterator = ds.make_initializable_iterator()
-# with tf.Session() as s:
-#     s.run([tf.global_variables_initializer(), tf.local_variables_initializer()],feed_dict={p:globalconf.get_root() + "transfer/tfrecord/train-*"})
-#     print(s.run(iterator.initializer, feed_dict={p:globalconf.get_root() + "transfer/tfrecord/train-*"}))
-# exit()
-
+        def predictor(images):
+            return sess.run(self.predict, feed_dict={self.images: images})
+        return predictor
 
 in_ckpt_path = globalconf.get_root() + "transfer/inception_v3/inception_v3.ckpt"
 out_ckpt_path = globalconf.get_root() + "transfer/inception_v3/tuned_inception_v3.ckpt"
@@ -120,24 +112,29 @@ tfrecord_root = globalconf.get_root() + "transfer/tfrecord/"
 
 m = Model(5)
 
-with tf.Session() as s:
-    m.train(s, in_ckpt_path, out_ckpt_path, logdir,tfrecord_root+"train-*")
+# with tf.Session() as s:
+#     m.train(s, in_ckpt_path, out_ckpt_path, logdir,tfrecord_root+"train-*")
 
 
 # with tf.Session() as s:
-#     m.eval(s, None, None, out_ckpt_path, tfrecord_root+"valid-*")
+#     m.eval(s, out_ckpt_path, tfrecord_root+"valid-*")
+#     exit()
 
-
-files = tf.train.match_filenames_once(tfrecord_root + "valid-*")
+predictor = m.get_predictor(out_ckpt_path)
+files = tf.train.match_filenames_once(tfrecord_root + "test-*")
 paser = ImageTFRecordBuilder(299, 299, 3, None, None, None, None, None, None).get_parser()
 ds = tf.data.TFRecordDataset(files)
-ds = ds.map(paser).shuffle(buffer_size=256).batch(128)
+ds = ds.map(paser).shuffle(buffer_size=128).batch(64)
 iterator = ds.make_initializable_iterator()
 image, label = iterator.get_next()
 with tf.Session() as s:
     s.run([tf.global_variables_initializer(), tf.local_variables_initializer()], feed_dict={m.tfrecord_paths:''})
     s.run(iterator.initializer)
-    img, lab = s.run([image, label])
-
-with tf.Session() as s:
-    m._eval(s, img, lab, out_ckpt_path)
+    for _ in range(10):
+        try:
+            img, lab = s.run([image, label])
+            pred = predictor(img)
+            acc = (pred == lab).astype(np.float32).mean()
+            print(acc)
+        except tf.errors.OutOfRangeError:
+            break
