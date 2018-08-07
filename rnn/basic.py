@@ -17,7 +17,7 @@ x_data = np.array([
 
 # cell = tf.nn.rnn_cell.BasicRNNCell(num_units=hidden_size)
 cell = tf.nn.rnn_cell.BasicRNNCell(num_units=hidden_size)
-cell = tf.nn.rnn_cell.MultiRNNCell([tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size) for _ in range(2)])
+# cell = tf.nn.rnn_cell.MultiRNNCell([tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size) for _ in range(2)])
 # cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size)
 outputs, states = tf.nn.dynamic_rnn(cell=cell,inputs=x,sequence_length=seq_lenth, dtype=tf.float32)
 with tf.Session() as sess:
