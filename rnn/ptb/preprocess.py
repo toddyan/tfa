@@ -1,7 +1,8 @@
 import globalconf
 import codecs
 
-def genVocab(file):
+
+def gen_vocab(file):
     with codecs.open(file) as f:
         word_count = {}
         while True:
@@ -32,6 +33,7 @@ def word_to_id(in_file, out_file, vocab):
             f_out.write(' '.join(ids) + "\n")
 
 
+# http://www.fit.vutbr.cz/~imikolov/rnnlm/simple-examples.tgz
 in_train_file = globalconf.get_root() + "rnn/ptb/simple-examples/data/ptb.train.txt"
 in_valid_file = globalconf.get_root() + "rnn/ptb/simple-examples/data/ptb.valid.txt"
 in_test_file = globalconf.get_root() + "rnn/ptb/simple-examples/data/ptb.test.txt"
@@ -41,7 +43,7 @@ out_valid_file = globalconf.get_root() + "rnn/ptb/simple-examples/data/id.valid.
 out_test_file = globalconf.get_root() + "rnn/ptb/simple-examples/data/id.test.txt"
 out_vacab_file = globalconf.get_root() + "rnn/ptb/simple-examples/data/vocab.txt"
 
-vocab = genVocab(in_train_file)
+vocab = gen_vocab(in_train_file)
 with codecs.open(out_vacab_file, mode='w', encoding='utf8') as f_vocab:
     for w, id in vocab.items():
         f_vocab.write(str(id) + "\t" + w + "\n")
