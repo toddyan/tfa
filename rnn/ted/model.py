@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import codecs
 import globalconf
 
 def file_to_dataset(file_holder):
@@ -37,10 +38,12 @@ class Model(object):
                 iter_initializer, src_seq, src_size, trg_in_seq, trg_out_seq, trg_size\
                     = join_src_trg_dataset(src_path, trg_path, batch_size, trg_sos_id, trg_eos_id)
             with tf.variable_scope("embding", initializer=initializer):
+                keep_prob = tf.placeholder(dtype=tf.float32, shape=[])
                 enc_embeding = tf.get_variable("src_embeding", shape=[src_vocab_size, hidden_size])
                 dec_embeding = tf.get_variable("trg_embeding", shape=[trg_vocab_size, hidden_size])
-                src_embeded = tf.nn.embedding_lookup(enc_embeding, src_seq)
-                trg_in_embeded = tf.nn.embedding_lookup(dec_embeding, trg_in_seq)
+                src_embeded = tf.nn.dropout(tf.nn.embedding_lookup(enc_embeding, src_seq), keep_prob=keep_prob)
+                trg_in_embeded = tf.nn.dropout(tf.nn.embedding_lookup(dec_embeding, trg_in_seq), keep_prob=keep_prob)
+
             with tf.variable_scope("cells", initializer=initializer):
                 enc_cell = tf.nn.rnn_cell.MultiRNNCell([
                     tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size) for _ in range(layers)
@@ -90,9 +93,9 @@ class Model(object):
                 dec_ids = dec_ids.write(0, trg_sos_id)
                 loop_init = (enc_state, dec_ids, 0) # 0 for step 0, and last effective index in trg_ids_tensor is 0
                 _, dec_ids, _ = tf.while_loop(cond=loop_cond, body=loop_body, loop_vars=loop_init)
-            return src_path, trg_path, iter_initializer, src_seq, src_size, token_cost, train_op, dec_ids.stack()
+            return src_path, trg_path, iter_initializer, src_seq, src_size, token_cost, train_op, dec_ids.stack(), keep_prob
         self.src_path, self.trg_path, self.iter_initializer, self.src_seq, self.src_size,\
-            self.token_cost, self.train_op, self.dec_ids = network_define()
+            self.token_cost, self.train_op, self.dec_ids, self.keep_prob = network_define()
 
     def train(self, model_path, src_path, trg_path):
         step = 0
@@ -103,18 +106,35 @@ class Model(object):
                 feed_dict={self.src_path: src_path, self.trg_path: trg_path}
             )
             sess.run(
-                self.iter_initializer, feed_dict={self.src_path: src_path, self.trg_path: trg_path}
+                self.iter_initializer,
+                feed_dict={self.src_path: src_path, self.trg_path: trg_path}
             )
             for epoch in range(5):
                 while True:
                     try:
-                        co, _ = sess.run([self.token_cost, self.train_op])
+                        co, _ = sess.run([self.token_cost, self.train_op], feed_dict={self.keep_prob: 0.8})
                         step += 1
                         print(step, co)
                         if step % 10 == 0:
                             saver.save(sess, model_path, global_step=step)
                     except tf.errors.OutOfRangeError: break
-    def eval(self, model_path):
+    def eval(self, model_path, en_vocab_file, zh_vocab_file):
+        en_word_to_id = {}
+        zh_id_to_word = {}
+        with codecs.open(en_vocab_file, mode='r', encoding='utf8') as f:
+            for line in f.readlines():
+                tokens = line.strip().split('\t')
+                if len(tokens) != 2: continue
+                en_word_to_id[tokens[0]] = int(tokens[1])
+        with codecs.open(zh_vocab_file, mode='r', encoding='utf8') as f:
+            for line in f.readlines():
+                tokens = line.strip().split('\t')
+                if len(tokens) != 2: continue
+                zh_id_to_word[int(tokens[1])] = tokens[0]
+        unk_id = en_word_to_id['<unk>']
+        input_sentense = "this is a test"
+        input = [en_word_to_id.get(w, unk_id) for w in input_sentense.split(' ')]
+        input_len = len(input)
         saver = tf.train.Saver()
         with tf.Session() as sess:
             sess.run(
@@ -122,26 +142,22 @@ class Model(object):
                 feed_dict={self.src_path: "", self.trg_path: ""}
             )
             saver.restore(sess, model_path)
-            # this is a test 18, 16, 9, 669
-            # who are you 76, 5, 14
-            zh = sess.run(self.dec_ids, feed_dict={model.src_seq: [[18, 16, 9, 669]], model.src_size: [4]})
+            zh = sess.run(
+                self.dec_ids,
+                feed_dict={self.src_seq: [input], self.src_size: [input_len], self.keep_prob: 1.0}
+            )
+            output_zh_sentense = ''.join([zh_id_to_word.get(w, "?") for w in zh])
             print(zh)
+            print(output_zh_sentense)
 
 if __name__ == "__main__":
     final_en_file = globalconf.get_root() + "rnn/ted/en-zh/train.tags.en-zh.en.final"
     final_zh_file = globalconf.get_root() + "rnn/ted/en-zh/train.tags.en-zh.zh.final"
-    model_path = globalconf.get_root() + "rnn/ted/seq2seq.model"
-    model = Model(100, 0, 1, 10000, 10000, 1024, 2, 100)
-    model.train(model_path, final_en_file, final_zh_file)
-    # model.eval(model_path)
+    en_vocab_file = globalconf.get_root() + "rnn/ted/en-zh/train.tags.en-zh.en.vocab"
+    zh_vocab_file = globalconf.get_root() + "rnn/ted/en-zh/train.tags.en-zh.zh.vocab"
 
-if __name__ == "__main__1":
-    src_ds = file_to_dataset(final_en_file)
-    trg_ds = file_to_dataset(final_zh_file)
-    ds = join_src_trg_dataset(src_ds, trg_ds, 2, 0, 1)
-    iter = ds.make_one_shot_iterator()
-    line = iter.get_next()
-    with tf.Session() as sess:
-        sess.run([tf.global_variables_initializer(), tf.local_variables_initializer()])
-        for _ in range(1):
-            print(sess.run(line))
+    model = Model(100, 0, 1, 10000, 10000, 1024, 2, 100)
+    model_path = globalconf.get_root() + "rnn/ted/seq2seq.model"
+    model.train(model_path, final_en_file, final_zh_file)
+    # model_path = globalconf.get_root() + "rnn/ted/seq2seq.model-140"
+    # model.eval(model_path, en_vocab_file, zh_vocab_file)
