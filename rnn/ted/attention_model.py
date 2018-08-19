@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 import codecs
 import globalconf
-
+from tensorflow.contrib import seq2seq
 def file_to_dataset(file_holder):
     files = tf.train.match_filenames_once(file_holder)
     dataset = tf.data.TextLineDataset(files)
@@ -29,7 +29,18 @@ def join_src_trg_dataset(src_path, trg_path, batch_size, trg_sos_id, trg_eos_id)
     return (iter.initializer,) + iter.get_next()
 
 class Model(object):
-    def __init__(self, batch_size, trg_sos_id, trg_eos_id, src_vocab_size, trg_vocab_size, hidden_size, layers, predict_max_step):
+    def __init__(
+            self,
+            batch_size,
+            trg_sos_id,
+            trg_eos_id,
+            src_vocab_size,
+            trg_vocab_size,
+            hidden_size,
+            attention_hidden_size,
+            layers,
+            predict_max_step
+    ):
         def network_define():
             initializer = tf.truncated_normal_initializer(stddev=0.1)
             with tf.variable_scope("input"):
@@ -45,23 +56,46 @@ class Model(object):
                 trg_in_embeded = tf.nn.dropout(tf.nn.embedding_lookup(dec_embeding, trg_in_seq), keep_prob=keep_prob)
 
             with tf.variable_scope("cells", initializer=initializer):
-                enc_cell = tf.nn.rnn_cell.MultiRNNCell([
-                    tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size) for _ in range(layers)
-                ])
+                # enc_cell = tf.nn.rnn_cell.MultiRNNCell([
+                #     tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size) for _ in range(layers)
+                # ])
+                enc_cell_fw = tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size)
+                enc_cell_bw = tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size)
                 dec_cell = tf.nn.rnn_cell.MultiRNNCell([
                     tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size) for _ in range(layers)
                 ])
 
             with tf.variable_scope("encoder", initializer=initializer):
-                _, enc_state = tf.nn.dynamic_rnn(enc_cell, src_embeded, src_size, dtype=tf.float32)
+                # _, enc_state = tf.nn.dynamic_rnn(enc_cell, src_embeded, src_size, dtype=tf.float32)
+                # enc_output: (2, batch_size, timestep, hidden_size)
+                enc_output, enc_state = tf.nn.bidirectional_dynamic_rnn(
+                    enc_cell_fw,
+                    enc_cell_bw,
+                    src_embeded,
+                    src_size,
+                    dtype=tf.float32
+                )
+                # enc_output: (batch, timestep, hidden_size*2)
+                enc_output = tf.concat([enc_output[0],enc_output[1]], axis=-1)
             with tf.variable_scope("decoder", initializer=initializer):
-                dec_output, _ = tf.nn.dynamic_rnn(dec_cell, trg_in_embeded, trg_size, initial_state=enc_state)
+                attention_mechanism = seq2seq.BahdanauAttention(
+                    num_units=attention_hidden_size,
+                    memory=enc_output,
+                    memory_sequence_length=src_size
+                )
+                attention_cell = seq2seq.AttentionWrapper(
+                    cell=dec_cell,
+                    attention_mechanism=attention_mechanism,
+                    attention_layer_size=attention_hidden_size
+                )
+                dec_output, _ = tf.nn.dynamic_rnn(attention_cell, trg_in_embeded, trg_size, dtype=tf.float32)
             with tf.variable_scope("softmax", initializer=initializer):
-                w_softmax = tf.transpose(dec_embeding)
-                b_softmax = tf.get_variable("bias_softmax", shape=[trg_vocab_size], dtype=tf.float32)
+                # w_softmax = tf.transpose(dec_embeding)
 
+                w_softmax = tf.get_variable("weight_softmax", shape=[attention_hidden_size,trg_vocab_size], dtype=tf.float32)
+                b_softmax = tf.get_variable("bias_softmax", shape=[trg_vocab_size], dtype=tf.float32)
             with tf.variable_scope("loss", initializer=initializer):
-                logits = tf.nn.bias_add(tf.matmul(tf.reshape(dec_output, shape=[-1, hidden_size]), w_softmax), b_softmax)
+                logits = tf.nn.bias_add(tf.matmul(tf.reshape(dec_output, shape=[-1, attention_hidden_size]), w_softmax), b_softmax)
                 loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
                     labels=tf.reshape(trg_out_seq, shape=[-1]),
                     logits=tf.reshape(logits, shape=[-1, trg_vocab_size])
@@ -83,19 +117,27 @@ class Model(object):
                 def loop_body(state, dec_ids, step):
                     prev_word_id = [dec_ids.read(step)]
                     prev_word_emb = tf.nn.embedding_lookup(dec_embeding, prev_word_id)
-                    cell_output, cell_state = dec_cell.call(prev_word_emb, state)
-                    output = tf.reshape(cell_output, [-1, hidden_size])
+                    cell_output, cell_state = attention_cell.call(prev_word_emb, state)
+                    output = tf.reshape(cell_output, [-1, attention_hidden_size])
                     logits = tf.reshape(tf.matmul(output, w_softmax) + b_softmax, shape=[-1])
                     dec_ids = dec_ids.write(step + 1, tf.argmax(logits, axis=0, output_type=tf.int32))
                     return cell_state, dec_ids, step + 1
 
                 dec_ids = tf.TensorArray(dtype=tf.int32, size=0, dynamic_size=True, clear_after_read=False)
                 dec_ids = dec_ids.write(0, trg_sos_id)
-                loop_init = (enc_state, dec_ids, 0) # 0 for step 0, and last effective index in trg_ids_tensor is 0
-                _, dec_ids, _ = tf.while_loop(cond=loop_cond, body=loop_body, loop_vars=loop_init)
-            return src_path, trg_path, iter_initializer, src_seq, src_size, token_cost, train_op, dec_ids.stack(), keep_prob
-        self.src_path, self.trg_path, self.iter_initializer, self.src_seq, self.src_size,\
-            self.token_cost, self.train_op, self.dec_ids, self.keep_prob = network_define()
+                # loop_init = (attention_cell.zero_state(batch_size=1, dtype=tf.float32), dec_ids, 0) # 0 for step 0, and last effective index in trg_ids_tensor is 0
+                debug_a = attention_cell.zero_state(batch_size=1, dtype=tf.float32)
+                print(debug_a)
+                _, debug_b = attention_cell.call(
+                    tf.nn.embedding_lookup(dec_embeding, [trg_sos_id]),
+                    debug_a
+                )
+            return debug_a,debug_b
+        self.debug_a, self.debug_b = network_define()
+        #         _, dec_ids, _ = tf.while_loop(cond=loop_cond, body=loop_body, loop_vars=loop_init)
+        #     return src_path, trg_path, iter_initializer, src_seq, src_size, token_cost, train_op, dec_ids.stack(), keep_prob
+        # self.src_path, self.trg_path, self.iter_initializer, self.src_seq, self.src_size,\
+        #     self.token_cost, self.train_op, self.dec_ids, self.keep_prob = network_define()
 
     def train(self, model_path, src_path, trg_path):
         step = 0
@@ -156,8 +198,21 @@ if __name__ == "__main__":
     en_vocab_file = globalconf.get_root() + "rnn/ted/en-zh/train.tags.en-zh.en.vocab"
     zh_vocab_file = globalconf.get_root() + "rnn/ted/en-zh/train.tags.en-zh.zh.vocab"
 
-    model = Model(100, 0, 1, 10000, 10000, 1024, 2, 100)
+    model = Model(
+        batch_size=100,
+        trg_sos_id=0,
+        trg_eos_id=1,
+        src_vocab_size=10000,
+        trg_vocab_size=10000,
+        hidden_size=1024,
+        attention_hidden_size=100,
+        layers=2,
+        predict_max_step=100
+    )
     model_path = globalconf.get_root() + "rnn/ted/seq2seq.model"
-    model.train(model_path, final_en_file, final_zh_file)
+    with tf.Session() as sess:
+        sess.run(tf.shape(model.debug_a))
+        sess.run(tf.shape(model.debug_b))
+    # model.train(model_path, final_en_file, final_zh_file)
     # model_path = globalconf.get_root() + "rnn/ted/seq2seq.model-140"
     # model.eval(model_path, en_vocab_file, zh_vocab_file)
