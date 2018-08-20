@@ -43,6 +43,7 @@ class Model(object):
     ):
         def network_define():
             initializer = tf.truncated_normal_initializer(stddev=0.1)
+            initializer = tf.random_uniform_initializer(-0.05, 0.05)
             with tf.variable_scope("input"):
                 src_path = tf.placeholder(tf.string, shape=[])
                 trg_path = tf.placeholder(tf.string, shape=[])
@@ -106,8 +107,8 @@ class Model(object):
                 token_cost = cost / tf.reduce_sum(mask)
             with tf.variable_scope("optimize", initializer=initializer):
                 grads = tf.gradients(cost/tf.to_float(batch_size), tf.trainable_variables())
-                grads, _ = tf.clip_by_global_norm(grads, clip_norm=1.0) # TODO
-                train_op = tf.train.GradientDescentOptimizer(0.1).apply_gradients(zip(grads, tf.trainable_variables()))
+                grads, _ = tf.clip_by_global_norm(grads, clip_norm=2.0) # TODO
+                train_op = tf.train.GradientDescentOptimizer(0.4).apply_gradients(zip(grads, tf.trainable_variables()))
             with tf.variable_scope("predict", initializer=initializer):
                 def loop_cond(state, dec_ids, step):
                     return tf.reduce_all(tf.logical_and(
