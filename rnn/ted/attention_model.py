@@ -90,9 +90,10 @@ class Model(object):
                 )
                 dec_output, _ = tf.nn.dynamic_rnn(attention_cell, trg_in_embeded, trg_size, dtype=tf.float32)
             with tf.variable_scope("softmax", initializer=initializer):
-                # w_softmax = tf.transpose(dec_embeding)
-
-                w_softmax = tf.get_variable("weight_softmax", shape=[attention_hidden_size,trg_vocab_size], dtype=tf.float32)
+                if attention_hidden_size == hidden_size:
+                    w_softmax = tf.transpose(dec_embeding)
+                else:
+                    w_softmax = tf.get_variable("weight_softmax", shape=[attention_hidden_size,trg_vocab_size], dtype=tf.float32)
                 b_softmax = tf.get_variable("bias_softmax", shape=[trg_vocab_size], dtype=tf.float32)
             with tf.variable_scope("loss", initializer=initializer):
                 logits = tf.nn.bias_add(tf.matmul(tf.reshape(dec_output, shape=[-1, attention_hidden_size]), w_softmax), b_softmax)
@@ -105,19 +106,21 @@ class Model(object):
                 token_cost = cost / tf.reduce_sum(mask)
             with tf.variable_scope("optimize", initializer=initializer):
                 grads = tf.gradients(cost/tf.to_float(batch_size), tf.trainable_variables())
-                grads, _ = tf.clip_by_global_norm(grads, clip_norm=5.0) # TODO
-                train_op = tf.train.GradientDescentOptimizer(1.0).apply_gradients(zip(grads, tf.trainable_variables()))
+                grads, _ = tf.clip_by_global_norm(grads, clip_norm=1.0) # TODO
+                train_op = tf.train.GradientDescentOptimizer(0.1).apply_gradients(zip(grads, tf.trainable_variables()))
             with tf.variable_scope("predict", initializer=initializer):
                 def loop_cond(state, dec_ids, step):
                     return tf.reduce_all(tf.logical_and(
                         tf.not_equal(dec_ids.read(step), trg_eos_id),
-                        tf.less(step, predict_max_step)
+                        tf.less(step, predict_max_step-1)
                     ))
 
                 def loop_body(state, dec_ids, step):
                     prev_word_id = [dec_ids.read(step)]
                     prev_word_emb = tf.nn.embedding_lookup(dec_embeding, prev_word_id)
-                    cell_output, cell_state = attention_cell.call(prev_word_emb, state)
+                    cell_output, cell_state = attention_cell.call(inputs=prev_word_emb, state=state)
+                    print("prev_state:", state)
+                    print("after_state:", cell_state)
                     output = tf.reshape(cell_output, [-1, attention_hidden_size])
                     logits = tf.reshape(tf.matmul(output, w_softmax) + b_softmax, shape=[-1])
                     dec_ids = dec_ids.write(step + 1, tf.argmax(logits, axis=0, output_type=tf.int32))
@@ -125,19 +128,11 @@ class Model(object):
 
                 dec_ids = tf.TensorArray(dtype=tf.int32, size=0, dynamic_size=True, clear_after_read=False)
                 dec_ids = dec_ids.write(0, trg_sos_id)
-                # loop_init = (attention_cell.zero_state(batch_size=1, dtype=tf.float32), dec_ids, 0) # 0 for step 0, and last effective index in trg_ids_tensor is 0
-                debug_a = attention_cell.zero_state(batch_size=1, dtype=tf.float32)
-                print(debug_a)
-                _, debug_b = attention_cell.call(
-                    tf.nn.embedding_lookup(dec_embeding, [trg_sos_id]),
-                    debug_a
-                )
-            return debug_a,debug_b
-        self.debug_a, self.debug_b = network_define()
-        #         _, dec_ids, _ = tf.while_loop(cond=loop_cond, body=loop_body, loop_vars=loop_init)
-        #     return src_path, trg_path, iter_initializer, src_seq, src_size, token_cost, train_op, dec_ids.stack(), keep_prob
-        # self.src_path, self.trg_path, self.iter_initializer, self.src_seq, self.src_size,\
-        #     self.token_cost, self.train_op, self.dec_ids, self.keep_prob = network_define()
+                zero_state = attention_cell.zero_state(batch_size=tf.convert_to_tensor(1, dtype=tf.int32), dtype=tf.float32)
+                _, dec_ids, _ = tf.while_loop(cond=loop_cond, body=loop_body, loop_vars=(zero_state, dec_ids, 0))
+            return src_path, trg_path, iter_initializer, src_seq, src_size, token_cost, train_op, dec_ids.stack(), keep_prob
+        self.src_path, self.trg_path, self.iter_initializer, self.src_seq, self.src_size,\
+            self.token_cost, self.train_op, self.dec_ids, self.keep_prob = network_define()
 
     def train(self, model_path, src_path, trg_path):
         step = 0
@@ -205,14 +200,10 @@ if __name__ == "__main__":
         src_vocab_size=10000,
         trg_vocab_size=10000,
         hidden_size=1024,
-        attention_hidden_size=100,
+        attention_hidden_size=1024,
         layers=2,
         predict_max_step=100
     )
-    model_path = globalconf.get_root() + "rnn/ted/seq2seq.model"
-    with tf.Session() as sess:
-        sess.run(tf.shape(model.debug_a))
-        sess.run(tf.shape(model.debug_b))
-    # model.train(model_path, final_en_file, final_zh_file)
-    # model_path = globalconf.get_root() + "rnn/ted/seq2seq.model-140"
+    model_path = globalconf.get_root() + "rnn/ted/attention.model"
+    model.train(model_path, final_en_file, final_zh_file)
     # model.eval(model_path, en_vocab_file, zh_vocab_file)
