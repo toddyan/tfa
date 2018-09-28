@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import tensorflow as tf
 import gym
@@ -15,20 +17,20 @@ class Agent:
                                         collections=collection_name)
                     b = tf.get_variable("b", shape=[n_hidden[0]], initializer=b_initializer, collections=collection_name)
                     a = tf.nn.relu(tf.matmul(input, w) + b)
-                # with tf.variable_scope("l2"):
-                #     w = tf.get_variable("w", shape=[n_hidden[0], n_hidden[1]], initializer=w_initializer,
-                #                         collections=collection_name)
-                #     b = tf.get_variable("b", shape=[n_hidden[1]], initializer=b_initializer, collections=collection_name)
-                #     a = tf.nn.relu(tf.matmul(a, w) + b)
+                with tf.variable_scope("l2"):
+                    w = tf.get_variable("w", shape=[n_hidden[0], n_hidden[1]], initializer=w_initializer,
+                                        collections=collection_name)
+                    b = tf.get_variable("b", shape=[n_hidden[1]], initializer=b_initializer, collections=collection_name)
+                    a = tf.nn.relu(tf.matmul(a, w) + b)
                 if dualing:
                     with tf.variable_scope("l3"):
                         with tf.variable_scope("value"):
-                            w = tf.get_variable("w", shape=[n_hidden[0], 1], initializer=w_initializer,
+                            w = tf.get_variable("w", shape=[n_hidden[1], 1], initializer=w_initializer,
                                                 collections=collection_name)
                             b = tf.get_variable("b", shape=[1], initializer=b_initializer, collections=collection_name)
                             value = tf.matmul(a, w) + b
                         with tf.variable_scope("advantage"):
-                            w = tf.get_variable("w", shape=[n_hidden[0], n_actions], initializer=w_initializer,
+                            w = tf.get_variable("w", shape=[n_hidden[1], n_actions], initializer=w_initializer,
                                                 collections=collection_name)
                             b = tf.get_variable("b", shape=[n_actions], initializer=b_initializer, collections=collection_name)
                             advantage = tf.matmul(a, w) + b
@@ -36,7 +38,7 @@ class Agent:
                 else:
                     with tf.variable_scope("l3"):
                         with tf.variable_scope("value"):
-                            w = tf.get_variable("w", shape=[n_hidden[0], n_actions], initializer=w_initializer,
+                            w = tf.get_variable("w", shape=[n_hidden[1], n_actions], initializer=w_initializer,
                                                 collections=collection_name)
                             b = tf.get_variable("b", shape=[n_actions], initializer=b_initializer, collections=collection_name)
                             a = tf.matmul(a, w) + b
@@ -69,7 +71,7 @@ class Agent:
                 train_op = tf.train.RMSPropOptimizer(learning_rate).minimize(loss)
                 #train_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
             with tf.variable_scope("net_assign"):
-                net_assign_op = [tf.assign(a, b) for a, b in zip(tf.get_collection('net_a'), tf.get_collection('net_b'))]
+                net_assign_op = [tf.assign(b, a) for b, a in zip(tf.get_collection('net_b'), tf.get_collection('net_a'))]
             return net_a_input, net_a_output, net_b_input, net_b_output, target, loss, train_op, net_assign_op
 
         self.double_dqn = True
@@ -87,7 +89,7 @@ class Agent:
         self.net_assign_step = 2000
         self.batch_size = 16
         self.explore_epsilon = 1.0
-        self.epsilon_decay = 0.999
+        self.epsilon_decay = 0.95
         self.learn_counter = 0
         self.memory_capacity = 500
         self.memory_counter = 0
@@ -96,7 +98,8 @@ class Agent:
             "observation": np.zeros([self.memory_capacity, n_feature], dtype=np.float32),
             "action": np.zeros([self.memory_capacity], dtype=np.int32),
             "observation_": np.zeros([self.memory_capacity, n_feature], dtype=np.float32),
-            "reward": np.zeros([self.memory_capacity], dtype=np.float32)
+            "reward": np.zeros([self.memory_capacity], dtype=np.float32),
+            "end": np.zeros([self.memory_capacity], dtype=np.bool)
         }
         self.sess = tf.Session()
         self.sess.run([tf.global_variables_initializer(), tf.local_variables_initializer()])
@@ -106,17 +109,18 @@ class Agent:
         self.explore_epsilon *= self.epsilon_decay
         return self.explore_epsilon
 
-    def add_memory(self, observation, action, observation_, reward):
+    def add_memory(self, observation, action, observation_, reward, end):
         index = self.memory_counter % self.memory_capacity
         self.memories["observation"][index, :] = observation
         self.memories["observation_"][index, :] = observation_
         self.memories["action"][index] = np.int32(action)
         self.memories["reward"][index] = reward
+        self.memories["end"][index] = end
         self.memory_counter += 1
 
-    def choose_action(self, observation):
+    def choose_action(self, observation, test):
         rand = np.random.rand()
-        if rand > self.explore_epsilon:
+        if test or rand > self.explore_epsilon:
             output = self.sess.run(self.net_a_output, feed_dict={self.net_a_input: np.expand_dims(observation, axis=0)})
             return output[0].argmax()
         else:
@@ -136,15 +140,20 @@ class Agent:
             print("q:", self.sess.run(self.net_a_output, feed_dict={self.net_a_input: batch_observation})[:2])
         batch_action = self.memories['action'][batch_index]
         batch_reward = self.memories['reward'][batch_index]
-        predict_q, next_q = self.sess.run([self.net_a_output, self.net_b_output], feed_dict={
-            self.net_a_input: batch_observation, self.net_b_input: batch_observation_
+        subseq_reward_mask = 1.0 - self.memories['end'][batch_index].astype(np.float32)
+        predict_q = self.sess.run(self.net_a_output, feed_dict={
+            self.net_a_input: batch_observation
+        })
+        next_q = self.sess.run(self.net_b_output, feed_dict={
+            self.net_b_input: batch_observation_
         })
         target = predict_q.copy()
         if self.double_dqn:
             target[np.arange(self.batch_size), batch_action] = \
-                batch_reward + self.reward_decay * next_q[np.arange(self.batch_size), predict_q.argmax(axis=1)]
+                batch_reward + subseq_reward_mask * self.reward_decay * next_q[np.arange(self.batch_size), predict_q.argmax(axis=1)]
         else:
-            target[np.arange(self.batch_size), batch_action] = batch_reward + self.reward_decay * next_q.max(axis=1)
+            target[np.arange(self.batch_size), batch_action] = \
+                batch_reward + subseq_reward_mask * self.reward_decay * next_q.max(axis=1)
         self.sess.run([self.loss, self.train_op], feed_dict={
             self.net_a_input: batch_observation, self.target: target
         })
@@ -166,33 +175,57 @@ class Agent:
         self.learn_counter += 1
 
 np.random.seed(0)
-agent = Agent(128, 2, 0.01, True)
+agent = Agent(128, 6, 0.01, True)
 env = gym.make('Pong-ramNoFrameskip-v0')
 # env = gym.make('PongNoFrameskip-v4')
-
-
+# env = gym.make('CartPole-v1')
+# for episode in range(100):
+#     observation = env.reset()
+#     for step in range(10000):
+#         env.render()
+#         action = env.action_space.sample()
+#         observation, reward, done, info = env.step(action)
+#         print("observation:", observation)
+#         print("step ", step, ":", reward)
+#         if done:
+#             print("------ done ------")
+#             break
+# exit()
+total_reward = 0.0
+total_step = 0
 for episode in range(100000):
     observation = env.reset()
-    o2 = observation
-    total_reward = 0.0
     for step in range(10000):
-        if episode % 200 == 0:
+        test = False
+        if episode % 50 == 0:
             env.render()
-        action = agent.choose_action(observation)
-        observation_, reward, done, info = env.step(action+4) # 4 up, 5 down
-        agent.add_memory(observation/1.0-o2/1.0, action, observation_/1.0-observation/1.0, reward)
-        o2 = observation
-        observation = observation_
+            test = True
+            # time.sleep(0.1)
+        action = agent.choose_action(observation, test)
+        observation_, reward, done, info = env.step(action) # 4 up 5 doown
         if reward > 0:
             print(episode, step, reward)
+        reward = 0.1 if reward==0 else reward # for cartpole
+        end = done or (reward != 0)
+        if not test:
+            agent.add_memory(observation/255.0, action, observation_/255.0, reward, end)
+        observation = observation_
         total_reward += reward
-        if (step > 200 or episode > 0) and step % 5 == 0 :
-            verbose = (episode % 200 ==0 and step == 1000)
+        if episode > 1 and step % 5 == 0 :
+            verbose = (episode % 100 == 0 and step == 2)
             agent.learn(verbose)
         if done:
-            print("episode %d end with step %d and total reward %f" % (episode, step, total_reward))
+            print("episode %d end in step %d, reward=%d" % (episode, step, total_reward))
+            total_reward = 0
+            # total_step += step
+            # if episode % 100 == 0:
+            #     print("episode %d end in step %d" % (episode, step))
+            #     print("avg total reward %f, avg step %f" % (total_reward / 100, total_step / 100.0))
+            #     total_reward = 0.0
+            #     total_step = 0
             break
-    print("explore:", agent.explore_decay())
+    if episode % 100 == 0:
+        print("explore:", agent.explore_decay())
 
 '''
 import matplotlib.pyplot as plt
