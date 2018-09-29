@@ -11,17 +11,17 @@ class Agent:
                 input = tf.placeholder(dtype=tf.float32, shape=[None, n_features], name="observation")
                 w_initializer = tf.random_normal_initializer(mean=0.0, stddev=0.1)
                 b_initializer = tf.constant_initializer(0.1)
-                n_hidden = [80,40]
+                n_hidden = [20,20]
                 with tf.variable_scope("l1"):
                     w = tf.get_variable("w", shape=[n_features, n_hidden[0]], initializer=w_initializer,
                                         collections=collection_name)
                     b = tf.get_variable("b", shape=[n_hidden[0]], initializer=b_initializer, collections=collection_name)
                     a = tf.nn.relu(tf.matmul(input, w) + b)
-                with tf.variable_scope("l2"):
-                    w = tf.get_variable("w", shape=[n_hidden[0], n_hidden[1]], initializer=w_initializer,
-                                        collections=collection_name)
-                    b = tf.get_variable("b", shape=[n_hidden[1]], initializer=b_initializer, collections=collection_name)
-                    a = tf.nn.relu(tf.matmul(a, w) + b)
+                # with tf.variable_scope("l2"):
+                #     w = tf.get_variable("w", shape=[n_hidden[0], n_hidden[1]], initializer=w_initializer,
+                #                         collections=collection_name)
+                #     b = tf.get_variable("b", shape=[n_hidden[1]], initializer=b_initializer, collections=collection_name)
+                #     a = tf.nn.relu(tf.matmul(a, w) + b)
                 if dualing:
                     with tf.variable_scope("l3"):
                         with tf.variable_scope("value"):
@@ -85,11 +85,11 @@ class Agent:
             writer.close()
         self.n_feature = n_feature
         self.n_action = n_action
-        self.reward_decay = 0.9
-        self.net_assign_step = 2000
-        self.batch_size = 16
+        self.reward_decay = 0.95
+        self.net_assign_step = 1000
+        self.batch_size = 64
         self.explore_epsilon = 1.0
-        self.epsilon_decay = 0.95
+        self.epsilon_decay = 0.99
         self.learn_counter = 0
         self.memory_capacity = 500
         self.memory_counter = 0
@@ -175,10 +175,10 @@ class Agent:
         self.learn_counter += 1
 
 np.random.seed(0)
-agent = Agent(128, 6, 0.01, True)
-env = gym.make('Pong-ramNoFrameskip-v0')
+agent = Agent(4, 2, 0.01, True)
+# env = gym.make('Pong-ramNoFrameskip-v0')
 # env = gym.make('PongNoFrameskip-v4')
-# env = gym.make('CartPole-v1')
+env = gym.make('CartPole-v1')
 # for episode in range(100):
 #     observation = env.reset()
 #     for step in range(10000):
@@ -197,15 +197,15 @@ for episode in range(100000):
     observation = env.reset()
     for step in range(10000):
         test = False
-        if episode % 50 == 0:
+        if episode % 500 == 0:
             env.render()
             test = True
             # time.sleep(0.1)
         action = agent.choose_action(observation, test)
-        observation_, reward, done, info = env.step(action) # 4 up 5 doown
-        if reward > 0:
-            print(episode, step, reward)
-        reward = 0.1 if reward==0 else reward # for cartpole
+        observation_, reward, done, info = env.step(action)
+        # if reward > 0:
+        #     print(episode, step, reward)
+        reward = 0.1 if reward==0 else reward
         end = done or (reward != 0)
         if not test:
             agent.add_memory(observation/255.0, action, observation_/255.0, reward, end)
@@ -215,7 +215,8 @@ for episode in range(100000):
             verbose = (episode % 100 == 0 and step == 2)
             agent.learn(verbose)
         if done:
-            print("episode %d end in step %d, reward=%d" % (episode, step, total_reward))
+            if test:
+                print("episode %d end in step %d, reward=%d" % (episode, step, total_reward))
             total_reward = 0
             # total_step += step
             # if episode % 100 == 0:
@@ -224,7 +225,7 @@ for episode in range(100000):
             #     total_reward = 0.0
             #     total_step = 0
             break
-    if episode % 100 == 0:
+    if episode % 300 == 0:
         print("explore:", agent.explore_decay())
 
 '''
